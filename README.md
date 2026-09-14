@@ -25,7 +25,7 @@ Humans get **Key Vault Administrator**; workloads get **Key Vault Secrets User**
 
 | Part | Rule | Examples |
 |---|---|---|
-| `system` | lowercase; the owning external system or app registration; suffix when one system has several credential sets | `boomi`, `kyriba`, `rippling`, `breezy`, `graph-opsmetrics`, `slack`, `orchestration`, `verabricks-erp` |
+| `system` | lowercase; the owning external system or app registration; suffix when one system has several credential sets. **Never a prefix of another system name** (loading is prefix-based: `boomi` would swallow `boomi-embedkit-*`, so that one is `embedkit`). `push` refuses such a collision. | `boomi`, `embedkit`, `kyriba`, `rippling`, `breezy`, `graph-opsmetrics`, `slack`, `orchestration`, `verabricks-erp` |
 | `KEY` | the environment variable name with `_` → `-` (Key Vault forbids underscores). Keep any prefix the variable already has so the round trip is mechanical | `BOOMI-TOKEN` ↔ `BOOMI_TOKEN`, `AZURE-CLIENT-SECRET` ↔ `AZURE_CLIENT_SECRET` |
 
 The environment is **not** in the name; it is the vault. The same name exists in both
@@ -50,6 +50,19 @@ az keyvault secret list --vault-name kv-datamap-ops-test --query "[?tags.system=
 | per-machine overrides (e.g. `KVENV_ENV=prod` when a laptop must deliberately hit prod) | **`.env.local`**, gitignored |
 
 A fresh clone therefore needs nothing but `az login`.
+
+**`.env.example` is committed too and lists every variable the app reads**, including the vault-backed
+ones, each with an example value and, for secrets, the vault secret name. It is the one place a new
+developer can see the whole configuration surface without touching the vault:
+
+```dotenv
+# [committed] kvenv app name
+KVENV_SYSTEM=kyriba
+# [committed]
+coupa-url=https://<instance>.coupahost.com
+# [vault] kv-datamap-ops-test/kyriba-clientsecret
+clientsecret=<coupa-oauth-client-secret>
+```
 
 ```dotenv
 # .env — committed

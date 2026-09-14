@@ -96,6 +96,13 @@ def cmd_push(args: argparse.Namespace) -> int:
     if not items:
         sys.exit("nothing to push (no variables after filtering)")
     client = _client(vault)
+    # Loading is prefix-based (`<system>-*`), so one system name must never be a prefix of another
+    # ("boomi" would swallow "boomi-embedkit-*"). Refuse the push when that would happen.
+    existing = {(p.tags or {}).get("system") for p in client.list_properties_of_secrets()} - {None, args.system}
+    clash = [s for s in existing if s.startswith(args.system + "-") or args.system.startswith(s + "-")]
+    if clash and not args.force:
+        sys.exit(f"system {args.system!r} collides by prefix with existing system(s) {sorted(clash)} in {vault}; "
+                 "pick a name that is not a prefix of / prefixed by another system, or pass --force")
     today = _dt.date.today().isoformat()
     owner = _owner()
     for var, (value, source) in items.items():
@@ -179,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--public", action="store_true", help="tag public=true (non-secret config)")
     p.add_argument("--content-type", default="text/plain")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--force", action="store_true", help="push even if the system name collides by prefix")
     p.set_defaults(fn=cmd_push)
 
     l = sub.add_parser("list", help="list secret names (never values)")
