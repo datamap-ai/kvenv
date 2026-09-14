@@ -1,0 +1,32 @@
+{
+  "name": "@datamap-ai/kvenv",
+  "version": "0.1.0",
+  "description": "Load a repo's secrets from the environment's Azure Key Vault at runtime (kv-datamap-ops-<env>).",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.mjs"
+    }
+  },
+  "types": "index.d.ts",
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/datamap-ai/kvenv.git"
+  },
+  "license": "UNLICENSED",
+  "private": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0"
+  }
+}
