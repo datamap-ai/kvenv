@@ -1,11 +1,13 @@
 """kvenv CLI — push secrets into a vault, list what is there. Never prints values.
 
-  python -m kvenv push --system kyriba --env test --from .env --repo kyriba
-  python -m kvenv push --system netsuite --env prod --file PRIVATE_PEM=private.pem \
+  python -m kvenv push --system myapp --vault kv-example --from .env --repo myapp
+  python -m kvenv push --system myapp --vault kv-example --file PRIVATE_PEM=private.pem \
         --content-type application/x-pem-file
-  python -m kvenv push --system slack --env test --from-json local.settings.json --json-path Values
-  python -m kvenv list --system kyriba --env test
+  python -m kvenv push --system myapp --vault kv-example --from-json local.settings.json --json-path Values
+  python -m kvenv list --system myapp --vault kv-example
   python -m kvenv check            # what would load() do here, without loading
+
+--vault may be omitted when KVENV_VAULT (or KVENV_VAULT_PATTERN + KVENV_ENV / --env) is set.
 
 `push` writes one secret per variable, named ``<system>-<KEY>``, tagged
 ``system``, ``var``, ``repo``, ``owner``, ``rotated``, ``source`` (+ ``public=true`` when
@@ -22,7 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import DEFAULT_ENV, WILDCARD, KvEnvError, _parse_dotenv, repo_root, secret_name, var_name, vault_name
+from . import WILDCARD, KvEnvError, _parse_dotenv, repo_root, secret_name, var_name, vault_name
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -97,7 +99,7 @@ def cmd_push(args: argparse.Namespace) -> int:
         sys.exit("nothing to push (no variables after filtering)")
     client = _client(vault)
     # Loading is prefix-based (`<system>-*`), so one system name must never be a prefix of another
-    # ("boomi" would swallow "boomi-embedkit-*"). Refuse the push when that would happen.
+    # ("app" would swallow "app-worker-*"). Refuse the push when that would happen.
     existing = {(p.tags or {}).get("system") for p in client.list_properties_of_secrets()} - {None, args.system}
     clash = [] if args.system == WILDCARD else [s for s in existing if s.startswith(args.system + "-") or args.system.startswith(s + "-")]
     if clash and not args.force:
@@ -151,18 +153,20 @@ def cmd_check(args: argparse.Namespace) -> int:
     for f in (".env", ".env.local"):
         merged.update(_parse_dotenv(root / f))
     system = os.environ.get("KVENV_SYSTEM") or merged.get("KVENV_SYSTEM")
-    env = os.environ.get("KVENV_ENV") or merged.get("KVENV_ENV") or DEFAULT_ENV
+    env = os.environ.get("KVENV_ENV") or merged.get("KVENV_ENV")
     override = os.environ.get("KVENV_VAULT") or merged.get("KVENV_VAULT")
+    if merged.get("KVENV_VAULT_PATTERN") and not os.environ.get("KVENV_VAULT_PATTERN"):
+        os.environ["KVENV_VAULT_PATTERN"] = merged["KVENV_VAULT_PATTERN"]
     print(f"repo root : {root}")
     print(f"system    : {system or '(missing)'}")
-    print(f"env       : {env}")
+    print(f"env       : {env or '(unset)'}")
     try:
         print(f"vault     : {vault_name(env, override)}")
     except KvEnvError as e:
         print(f"vault     : {e}")
         return 2
     if not system:
-        print("KVENV_SYSTEM is missing — run the general-kvenv-setup skill.")
+        print("KVENV_SYSTEM is missing — add it to the committed .env.")
         return 2
     args.system, args.env, args.vault = system.split(",")[0].strip(), env, override
     return cmd_list(args)
@@ -174,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("push", help="write variables into the vault as <system>-<KEY>")
     p.add_argument("--system", required=True)
-    p.add_argument("--env", default=None, help="test (default) or prod")
+    p.add_argument("--env", default=None, help="environment label, used with KVENV_VAULT_PATTERN")
     p.add_argument("--vault", default=None, help="override vault name")
     p.add_argument("--from", dest="from_env", help=".env-style file to read")
     p.add_argument("--from-json", help="JSON file to read (e.g. local.settings.json)")

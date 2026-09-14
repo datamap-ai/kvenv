@@ -1,10 +1,10 @@
 /**
- * kvenv — load a repo's secrets from the environment's Azure Key Vault at runtime.
+ * kvenv — load an application's secrets from an Azure Key Vault into the environment at runtime.
  *
  * Same contract as the Python and PowerShell ports:
- *   KVENV_SYSTEM   required; comma-separated system names, or `*` for every secret 1:1 (legacy vaults)
- *   KVENV_ENV      "test" (default) or "prod" — picks the vault
- *   KVENV_VAULT    optional override; otherwise kv-datamap-ops-<env>
+ *   KVENV_VAULT    the Key Vault name; required unless KVENV_VAULT_PATTERN ({env}) + KVENV_ENV are set
+ *   KVENV_SYSTEM   required; comma-separated system names, or `*` for every secret 1:1
+ *   KVENV_ENV      environment label, used only with KVENV_VAULT_PATTERN
  *   KVENV_OPTIONAL "1" downgrades vault failures to a console warning
  *
  * Secret names are `<system>-<KEY>` where KEY is the env var name with `_` → `-`.
@@ -21,21 +21,18 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-export const VAULT_PATTERN = 'kv-datamap-ops-{env}';
-export const ENVS = ['test', 'prod'];
-export const DEFAULT_ENV = 'test';
-
 export class KvEnvError extends Error {}
 
 export function vaultName(env, override) {
   override = override ?? process.env.KVENV_VAULT;
   if (override) return override;
-  env = (env ?? process.env.KVENV_ENV ?? DEFAULT_ENV).toLowerCase();
-  if (!ENVS.includes(env)) throw new KvEnvError(`KVENV_ENV=${env} is not one of ${ENVS.join(', ')}`);
-  return VAULT_PATTERN.replace('{env}', env);
+  const pattern = process.env.KVENV_VAULT_PATTERN;
+  env = env ?? process.env.KVENV_ENV;
+  if (pattern && env) return pattern.replace('{env}', env);
+  throw new KvEnvError('kvenv: no vault configured. Set KVENV_VAULT=<vault name> in the committed .env (or KVENV_VAULT_PATTERN containing {env} together with KVENV_ENV).');
 }
 
-export const WILDCARD = '*'; // KVENV_SYSTEM=* : every secret in the vault, name == variable (legacy vaults)
+export const WILDCARD = '*'; // KVENV_SYSTEM=* : every secret in the vault, name == variable (no <system>- prefix)
 
 export function secretName(system, varName) {
   const key = varName.replace(/_/g, '-');
@@ -138,13 +135,13 @@ export async function loadKvEnv(opts = {}) {
   const systems = raw.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (s === WILDCARD ? s : s.toLowerCase()));
   try {
     if (systems.length === 0) {
-      throw new KvEnvError('kvenv: KVENV_SYSTEM is not set. Add `KVENV_SYSTEM=<app name>` and `KVENV_ENV=test` to the committed .env (run the general-kvenv-setup skill).');
+      throw new KvEnvError('kvenv: KVENV_SYSTEM is not set. Add `KVENV_SYSTEM=<app name>` and `KVENV_VAULT=<vault name>` to the committed .env.');
     }
     const v = vaultName(env, vault);
     const counts = await fetchSecrets(systems, v);
     const missing = Object.entries(counts).filter(([, n]) => n === 0).map(([s]) => s);
     if (missing.length) {
-      throw new KvEnvError(`kvenv: no secrets named '${missing[0]}-*' in ${v}. Either the app name is wrong or nothing has been pushed yet (python -m kvenv push --system ${missing[0]} --env ${env ?? process.env.KVENV_ENV ?? DEFAULT_ENV} --from .env).`);
+      throw new KvEnvError(`kvenv: no secrets named '${missing[0]}-*' in ${v}. Either the app name is wrong or nothing has been pushed yet (python -m kvenv push --system ${missing[0]} --vault ${v} --from .env).`);
     }
     return counts;
   } catch (err) {

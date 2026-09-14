@@ -1,6 +1,3 @@
-export declare const VAULT_PATTERN: string;
-export declare const ENVS: string[];
-export declare const DEFAULT_ENV: string;
 export declare const WILDCARD: string;
 
 export declare class KvEnvError extends Error {}
@@ -13,9 +10,9 @@ export declare function repoRoot(start?: string): string;
 export interface LoadKvEnvOptions {
   /** Comma-separated system names. Default: process.env.KVENV_SYSTEM */
   system?: string;
-  /** "test" | "prod". Default: process.env.KVENV_ENV ?? "test" */
+  /** Environment label, used with KVENV_VAULT_PATTERN. Default: process.env.KVENV_ENV */
   env?: string;
-  /** Vault name override. Default: process.env.KVENV_VAULT ?? kv-datamap-ops-<env> */
+  /** Vault name. Default: process.env.KVENV_VAULT, else KVENV_VAULT_PATTERN with {env} */
   vault?: string;
   /** Apply .env.local and .env from the repo root first. Default true */
   dotenv?: boolean;

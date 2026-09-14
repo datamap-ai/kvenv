@@ -5,10 +5,10 @@
 
 .DESCRIPTION
   Same contract as the Python and Node ports:
-    KVENV_SYSTEM   required; comma-separated system names
-    KVENV_ENV      test (default) | prod   — picks the vault
-    KVENV_VAULT    optional override; otherwise kv-datamap-ops-<env>
-    KVENV_OPTIONAL 1 → warn instead of throw
+    KVENV_VAULT          the Key Vault name; required unless KVENV_VAULT_PATTERN ({env}) + KVENV_ENV are set
+    KVENV_SYSTEM         required; comma-separated system names, or * for every secret 1:1
+    KVENV_ENV            environment label, used only with KVENV_VAULT_PATTERN
+    KVENV_OPTIONAL       1 → warn instead of throw
 
   Secret names are <system>-<KEY>; KEY is the env var name with _ → -.
   Import-KvEnv applies .env.local then .env from the repo root (never overwriting a
@@ -18,12 +18,9 @@
 .EXAMPLE
   Import-Module ./pwsh/KvEnv.psm1
   Import-KvEnv                                  # reads KVENV_* from .env
-  Import-KvEnv -System verabricks-erp -Env test # explicit
+  Import-KvEnv -System myapp -Vault kv-example    # explicit
   docker compose up
 #>
-
-$script:VaultPattern = 'kv-datamap-ops-{0}'
-$script:Envs = @('test', 'prod')
 
 function Get-KvEnvRepoRoot {
   param([string]$Start = (Get-Location).Path)
@@ -57,11 +54,10 @@ function Get-KvEnvVaultName {
   param([string]$Env, [string]$Override)
   if (-not $Override) { $Override = $env:KVENV_VAULT }
   if ($Override) { return $Override }
+  $pattern = $env:KVENV_VAULT_PATTERN
   if (-not $Env) { $Env = $env:KVENV_ENV }
-  if (-not $Env) { $Env = 'test' }
-  $Env = $Env.ToLower()
-  if ($script:Envs -notcontains $Env) { throw "KVENV_ENV=$Env is not one of $($script:Envs -join ', ')" }
-  return ($script:VaultPattern -f $Env)
+  if ($pattern -and $Env) { return $pattern.Replace('{env}', $Env) }
+  throw 'kvenv: no vault configured. Set KVENV_VAULT=<vault name> in the committed .env (or KVENV_VAULT_PATTERN containing {env} together with KVENV_ENV).'
 }
 
 function Import-KvEnv {
@@ -88,7 +84,7 @@ function Import-KvEnv {
   $systems = @(($System -split ',') | ForEach-Object { if ($_.Trim() -eq '*') { '*' } else { $_.Trim().ToLower() } } | Where-Object { $_ })
   try {
     if ($systems.Count -eq 0) {
-      throw 'kvenv: KVENV_SYSTEM is not set. Add KVENV_SYSTEM=<app name> and KVENV_ENV=test to the committed .env (run the general-kvenv-setup skill).'
+      throw 'kvenv: KVENV_SYSTEM is not set. Add KVENV_SYSTEM=<app name> and KVENV_VAULT=<vault name> to the committed .env.'
     }
     $vaultName = Get-KvEnvVaultName -Env $Env -Override $Vault
     $acct = az account show 2>$null

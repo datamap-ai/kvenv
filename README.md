@@ -1,21 +1,38 @@
 # kvenv
 
-Load a repo's secrets from the environment's Azure Key Vault **at runtime**, the same way
-on a laptop (`az login`), in CI (service principal), and deployed (managed identity).
-No secrets in `.env`, no "pull to .env" step, one RBAC role everywhere.
+Load an application's secrets from an **Azure Key Vault** into its environment **at runtime**,
+the same way on a laptop (`az login`), in CI (service principal), and deployed (managed
+identity). No secrets in `.env`, no "pull to .env" step, one RBAC role everywhere.
 
-This README is the source of truth for the naming scheme.
+Three ports, one contract: Python, Node (incl. Vite), PowerShell.
 
-## Vaults
+## How it works
 
-| Environment | Vault | Who uses it |
-|---|---|---|
-| `test` (default) | `kv-datamap-ops-test` | laptops, CI, test deployments |
-| `prod` | `kv-datamap-ops-prod` | production deployments (`KVENV_ENV=prod` in app settings) |
+1. Read the committed `.env` (and a gitignored `.env.local` for per-machine overrides).
+2. Sign in with `DefaultAzureCredential`.
+3. List the vault, take every secret named `<system>-<KEY>`, and set `KEY` (with `-` → `_`) in
+   the process environment **if it is not already set**.
 
-Both live in the **DataMap Operations** subscription, resource group
-`datamap-operations-keyvault`, RBAC mode, purge protection on, audit logs to Log Analytics.
-Humans get **Key Vault Administrator**; workloads get **Key Vault Secrets User** via managed identity.
+Precedence, highest first: process environment → `.env.local` → `.env` → vault. Existing
+variables always win, so CI variables and deployed app settings override the vault.
+
+## Configuration
+
+| Variable | Meaning |
+|---|---|
+| `KVENV_VAULT` | the vault name (`https://<name>.vault.azure.net`). Required unless the next two are set |
+| `KVENV_VAULT_PATTERN` | optional; a pattern containing `{env}`, e.g. `kv-myorg-{env}` |
+| `KVENV_ENV` | optional environment label substituted into the pattern, e.g. `test`, `prod` |
+| `KVENV_SYSTEM` | required; one or more comma-separated system names, or `*` to map every secret 1:1 |
+| `KVENV_OPTIONAL=1` | warn instead of fail when the vault is unreadable (offline work) |
+
+These live in the committed `.env`, next to public configuration:
+
+```dotenv
+KVENV_VAULT=kv-example-test
+KVENV_SYSTEM=myapp
+API_URL=https://api.example.com
+```
 
 ## Secret naming
 
@@ -23,62 +40,36 @@ Humans get **Key Vault Administrator**; workloads get **Key Vault Secrets User**
 <system>-<KEY>
 ```
 
-| Part | Rule | Examples |
-|---|---|---|
-| `system` | lowercase; the owning external system or app registration; suffix when one system has several credential sets. **Never a prefix of another system name** (loading is prefix-based: `boomi` would swallow `boomi-embedkit-*`, so that one is `embedkit`). `push` refuses such a collision. | `boomi`, `embedkit`, `kyriba`, `rippling`, `breezy`, `graph-opsmetrics`, `slack`, `orchestration`, `verabricks-erp` |
-| `KEY` | the environment variable name with `_` → `-` (Key Vault forbids underscores). Keep any prefix the variable already has so the round trip is mechanical | `BOOMI-TOKEN` ↔ `BOOMI_TOKEN`, `AZURE-CLIENT-SECRET` ↔ `AZURE_CLIENT_SECRET` |
+- `system` — lowercase; the application or credential owner (`myapp`, `graph-reporting`).
+  **Never a prefix of another system name** — loading is prefix-based, so `app` would swallow
+  `app-worker-*`. `push` refuses such a collision.
+- `KEY` — the environment variable name with `_` → `-` (Key Vault forbids underscores).
+  `myapp-CLIENT-SECRET` ↔ `CLIENT_SECRET`.
 
-The environment is **not** in the name; it is the vault. The same name exists in both
-vaults with different values when a system has both a test and a prod credential. A
-single-tenant system used from laptops (Boomi, Kyriba, Rippling) lives in **test**, and in
-**prod** only when a deployed prod workload needs it.
+The environment is **not** in the name; use one vault per environment.
+`KVENV_SYSTEM=*` maps a whole vault 1:1 (`STYTCH-SECRET` → `STYTCH_SECRET`) for vaults that
+do not use the prefix.
 
-**Tags** on every secret: `system`, `var` (original variable name), `repo` (consumers),
-`owner`, `rotated` (ISO date), `source` (where it came from), `public=true` for non-secret
-config stored for convenience. Filter with them:
-
-```bash
-az keyvault secret list --vault-name kv-datamap-ops-test --query "[?tags.system=='kyriba'].name" -o tsv
-```
+`push` tags every secret with `system`, `var`, `repo`, `owner`, `rotated`, `source`, so the vault
+can be filtered without parsing names.
 
 ## What goes where
 
 | | Location |
 |---|---|
-| Tokens, client secrets, passwords, connection strings, webhook URLs, encryption keys | **vault** |
-| kvenv pointers, `VITE_*` client IDs, tenant IDs, redirect URIs, API URLs, ports, log levels, feature flags | **committed `.env`** |
-| per-machine overrides (e.g. `KVENV_ENV=prod` when a laptop must deliberately hit prod) | **`.env.local`**, gitignored |
+| tokens, client secrets, passwords, connection strings, webhook URLs, keys | **vault** |
+| kvenv pointers, public client IDs, tenant IDs, URLs, ports, flags | **committed `.env`** |
+| per-machine overrides | **`.env.local`**, gitignored |
+| every variable the app reads, with example values and vault secret names | **committed `.env.example`** |
 
-A fresh clone therefore needs nothing but `az login`.
-
-**`.env.example` is committed too and lists every variable the app reads**, including the vault-backed
-ones, each with an example value and, for secrets, the vault secret name. It is the one place a new
-developer can see the whole configuration surface without touching the vault:
-
-```dotenv
-# [committed] kvenv app name
-KVENV_SYSTEM=kyriba
-# [committed]
-coupa-url=https://<instance>.coupahost.com
-# [vault] kv-datamap-ops-test/kyriba-clientsecret
-clientsecret=<coupa-oauth-client-secret>
-```
-
-```dotenv
-# .env — committed
-KVENV_SYSTEM=kyriba
-KVENV_ENV=test
-```
-
-Precedence, highest first: process environment → `.env.local` → `.env` → vault. The vault
-never overwrites a variable that is already set, so CI and deployed app settings win.
+A fresh clone needs nothing but `az login`.
 
 ## Install and use
 
 ### Python
 
 ```bash
-pip install "git+https://github.com/datamap-ai/kvenv.git#subdirectory=python"
+pip install "kvenv @ https://github.com/datamap-ai/kvenv/archive/<commit>.tar.gz#subdirectory=python"
 ```
 ```python
 import kvenv
@@ -88,7 +79,7 @@ kvenv.load()          # first line of the entry module
 ### Node / Vite
 
 ```bash
-npm i github:datamap-ai/kvenv
+npm i https://github.com/datamap-ai/kvenv/tarball/<commit>
 ```
 ```js
 import { loadKvEnv } from '@datamap-ai/kvenv';
@@ -96,44 +87,37 @@ await loadKvEnv();    // before anything reads process.env
 ```
 For a Vite app put the same two lines at the top of `vite.config.ts`. Vite forwards every
 `VITE_*` present in `process.env` into `import.meta.env`; the browser never touches the vault.
+For a CommonJS entry point, a 3-line `start.mjs` (import, `await loadKvEnv()`,
+`await import('./index.js')`) does the job.
+
+Pin a commit in the URL rather than a branch so installs are reproducible. Tarball URLs need
+neither `git` nor SSH inside a Docker build.
 
 ### PowerShell / docker compose
 
 ```powershell
-Import-Module (Join-Path $PSScriptRoot 'KvEnv.psm1')   # or from the clone: ./pwsh/KvEnv.psm1
+Import-Module ./pwsh/KvEnv.psm1
 Import-KvEnv
-docker compose up
+docker compose up      # compose sees the loaded variables via ${VAR}
 ```
 
-### Options
+## Failures are loud and name their cause
 
-| Variable | Meaning |
+| Cause | Fix |
 |---|---|
-| `KVENV_SYSTEM` | required; comma-separated system names, or `*` to map every secret in the vault 1:1 (`STYTCH-SECRET` → `STYTCH_SECRET`) for vaults that predate the `<system>-` convention, e.g. `KVENV_VAULT=kv-dev-datamap-ai` |
-| `KVENV_ENV` | `test` (default) or `prod` |
-| `KVENV_VAULT` | override the derived vault name |
-| `KVENV_OPTIONAL=1` | warn instead of fail when the vault is unreadable (offline work) |
+| not signed in | `az login` (or SP variables in CI) |
+| signed in but 403 | grant this identity **Key Vault Secrets User** on the vault; `az login` will not help |
+| vault unreachable | wrong `KVENV_VAULT` / pattern |
+| `no secrets named '<system>-*'` | wrong system name, or nothing pushed yet |
 
-Failures are loud and name their cause, because the three causes need three fixes:
-**not signed in** → `az login`; **RBAC denied** → ask for `Key Vault Secrets User` on that
-vault for this identity (`az login` will not help); **unreachable** → wrong `KVENV_ENV`/`KVENV_VAULT`.
-
-## Pushing secrets
+## CLI
 
 ```bash
-python -m kvenv push --system kyriba --env test --from .env --repo kyriba --only clientid,clientsecret
-python -m kvenv push --system slack  --env prod --from-json local.settings.json --json-path Values --only SLACK_WEBHOOK_URL
-python -m kvenv push --system netsuite --env test --file PRIVATE_PEM=private.pem --content-type application/x-pem-file
-python -m kvenv list --system kyriba --env test
+python -m kvenv push --system myapp --vault kv-example --from .env --repo myapp --only CLIENT_SECRET,API_TOKEN
+python -m kvenv push --system myapp --vault kv-example --from-json local.settings.json --json-path Values --only WEBHOOK_URL
+python -m kvenv push --system myapp --vault kv-example --file PRIVATE_PEM=private.pem --content-type application/x-pem-file
+python -m kvenv list --system myapp --vault kv-example
 python -m kvenv check        # what would load() use from this directory
 ```
 
-`push` never prints values. Set `KVENV_OWNER` to override the `owner` tag (defaults to the
-`az` signed-in user).
-
-## Claude Code
-
-The datamap-library ships `general-nudge-kvenv-setup` (SessionStart hook) and the
-`general-kvenv-setup` skill. A session in a repo missing `KVENV_SYSTEM`/`KVENV_ENV` is told
-exactly what is missing and asked to collect vault, environment, and app name before doing
-anything else.
+`push` and `list` never print values.

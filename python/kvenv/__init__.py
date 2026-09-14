@@ -1,16 +1,16 @@
-"""kvenv — load a repo's secrets from the environment's Azure Key Vault at runtime.
+"""kvenv — load an application's secrets from an Azure Key Vault into the environment at runtime.
 
 Contract (identical in the Node and PowerShell ports):
 
+  * ``KVENV_VAULT``   the Key Vault name (``https://<name>.vault.azure.net``). Required unless
+                     ``KVENV_VAULT_PATTERN`` (containing ``{env}``) and ``KVENV_ENV`` are both set.
   * ``KVENV_SYSTEM``  required; one or more comma-separated system names, or ``*`` to map
-                     every secret in the vault 1:1 (legacy vaults without the ``<system>-`` prefix).
-  * ``KVENV_ENV``     ``test`` (default) or ``prod``. Picks the vault.
-  * ``KVENV_VAULT``   optional override; otherwise ``kv-datamap-ops-<env>``.
+                     every secret in the vault 1:1 (vaults that do not use the ``<system>-`` prefix).
+  * ``KVENV_ENV``     an environment label (e.g. ``test``, ``prod``); only used with the pattern.
   * ``KVENV_OPTIONAL`` set to ``1`` to downgrade vault failures to a warning.
 
 Secret names are ``<system>-<KEY>`` where KEY is the environment variable name with
-``_`` replaced by ``-``. ``kyriba-CLIENTSECRET`` becomes ``CLIENTSECRET``;
-``graph-opsmetrics-AZURE-CLIENT-SECRET`` becomes ``AZURE_CLIENT_SECRET``.
+``_`` replaced by ``-``. ``myapp-CLIENT-SECRET`` becomes ``CLIENT_SECRET``.
 
 ``load()`` first applies ``.env.local`` then ``.env`` from the repo root (never
 overwriting a variable that is already set), then fetches every vault secret whose
@@ -33,9 +33,6 @@ from typing import Iterable
 __all__ = ["load", "KvEnvError", "vault_name", "secret_name", "var_name", "repo_root"]
 __version__ = "0.1.0"
 
-VAULT_PATTERN = "kv-datamap-ops-{env}"
-ENVS = ("test", "prod")
-DEFAULT_ENV = "test"
 
 
 class KvEnvError(RuntimeError):
@@ -45,17 +42,22 @@ class KvEnvError(RuntimeError):
 # --------------------------------------------------------------------------- naming
 
 def vault_name(env: str | None = None, override: str | None = None) -> str:
+    """Resolve the vault name: KVENV_VAULT, else KVENV_VAULT_PATTERN with {env} substituted."""
     override = override or os.environ.get("KVENV_VAULT")
     if override:
         return override
-    env = (env or os.environ.get("KVENV_ENV") or DEFAULT_ENV).lower()
-    if env not in ENVS:
-        raise KvEnvError(f"KVENV_ENV={env!r} is not one of {ENVS}")
-    return VAULT_PATTERN.format(env=env)
+    pattern = os.environ.get("KVENV_VAULT_PATTERN")
+    env = env or os.environ.get("KVENV_ENV")
+    if pattern and env:
+        return pattern.replace("{env}", env)
+    raise KvEnvError(
+        "kvenv: no vault configured. Set KVENV_VAULT=<vault name> in the committed .env "
+        "(or KVENV_VAULT_PATTERN containing {env} together with KVENV_ENV)."
+    )
 
 
-WILDCARD = "*"  # KVENV_SYSTEM=* : every secret in the vault, secret name == variable name (for vaults
-                # that predate the <system>- convention, e.g. kv-dev-datamap-ai's STYTCH-SECRET).
+WILDCARD = "*"  # KVENV_SYSTEM=* : every secret in the vault, secret name == variable name
+                # (for vaults that do not use the <system>- prefix).
 
 
 def secret_name(system: str, var: str) -> str:
@@ -184,7 +186,7 @@ def load(
         if not systems:
             raise KvEnvError(
                 "kvenv: KVENV_SYSTEM is not set. Add `KVENV_SYSTEM=<app name>` and "
-                "`KVENV_ENV=test` to the committed .env (run the general-kvenv-setup skill)."
+                "`KVENV_VAULT=<vault name>` to the committed .env."
             )
         v = vault_name(env, vault)
         counts = _fetch(systems, v)
@@ -192,8 +194,7 @@ def load(
         if missing:
             raise KvEnvError(
                 f"kvenv: no secrets named '{missing[0]}-*' in {v}. Either the app name is wrong "
-                f"or nothing has been pushed yet (`python -m kvenv push --system {missing[0]} --env "
-                f"{(env or os.environ.get('KVENV_ENV') or DEFAULT_ENV)} --from .env`)."
+                f"or nothing has been pushed yet (`python -m kvenv push --system {missing[0]} --vault {v} --from .env`)."
             )
         return counts
     except KvEnvError as e:

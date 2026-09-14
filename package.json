@@ -1,7 +1,7 @@
 {
   "name": "@datamap-ai/kvenv",
   "version": "0.1.0",
-  "description": "Load a repo's secrets from the environment's Azure Key Vault at runtime (kv-datamap-ops-<env>).",
+  "description": "Load an application's secrets from an Azure Key Vault into the environment at runtime.",
   "type": "module",
   "main": "index.mjs",
   "exports": {
