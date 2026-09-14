@@ -2,7 +2,7 @@
  * kvenv — load a repo's secrets from the environment's Azure Key Vault at runtime.
  *
  * Same contract as the Python and PowerShell ports:
- *   KVENV_SYSTEM   required; one or more comma-separated system names
+ *   KVENV_SYSTEM   required; comma-separated system names, or `*` for every secret 1:1 (legacy vaults)
  *   KVENV_ENV      "test" (default) or "prod" — picks the vault
  *   KVENV_VAULT    optional override; otherwise kv-datamap-ops-<env>
  *   KVENV_OPTIONAL "1" downgrades vault failures to a console warning
@@ -35,11 +35,15 @@ export function vaultName(env, override) {
   return VAULT_PATTERN.replace('{env}', env);
 }
 
+export const WILDCARD = '*'; // KVENV_SYSTEM=* : every secret in the vault, name == variable (legacy vaults)
+
 export function secretName(system, varName) {
-  return `${system}-${varName.replace(/_/g, '-')}`;
+  const key = varName.replace(/_/g, '-');
+  return system === WILDCARD ? key : `${system}-${key}`;
 }
 
 export function varName(system, name) {
+  if (system === WILDCARD) return name.replace(/-/g, '_');
   const prefix = `${system}-`;
   if (!name.toLowerCase().startsWith(prefix.toLowerCase())) return null;
   return name.slice(prefix.length).replace(/-/g, '_');
@@ -131,7 +135,7 @@ export async function loadKvEnv(opts = {}) {
   if (dotenv) applyDotenv(repoRoot(start));
   const optional = opts.optional ?? ['1', 'true', 'yes'].includes((process.env.KVENV_OPTIONAL ?? '').toLowerCase());
   const raw = system ?? process.env.KVENV_SYSTEM ?? '';
-  const systems = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const systems = raw.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (s === WILDCARD ? s : s.toLowerCase()));
   try {
     if (systems.length === 0) {
       throw new KvEnvError('kvenv: KVENV_SYSTEM is not set. Add `KVENV_SYSTEM=<app name>` and `KVENV_ENV=test` to the committed .env (run the general-kvenv-setup skill).');

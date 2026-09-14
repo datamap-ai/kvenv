@@ -109,7 +109,7 @@ docker compose up
 
 | Variable | Meaning |
 |---|---|
-| `KVENV_SYSTEM` | required; comma-separated system names |
+| `KVENV_SYSTEM` | required; comma-separated system names, or `*` to map every secret in the vault 1:1 (`STYTCH-SECRET` → `STYTCH_SECRET`) for vaults that predate the `<system>-` convention, e.g. `KVENV_VAULT=kv-dev-datamap-ai` |
 | `KVENV_ENV` | `test` (default) or `prod` |
 | `KVENV_VAULT` | override the derived vault name |
 | `KVENV_OPTIONAL=1` | warn instead of fail when the vault is unreadable (offline work) |

@@ -85,7 +85,7 @@ function Import-KvEnv {
   }
   if (-not $Optional) { $Optional = ($env:KVENV_OPTIONAL -in @('1', 'true', 'yes')) }
   if (-not $System) { $System = $env:KVENV_SYSTEM }
-  $systems = @(($System -split ',') | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+  $systems = @(($System -split ',') | ForEach-Object { if ($_.Trim() -eq '*') { '*' } else { $_.Trim().ToLower() } } | Where-Object { $_ })
   try {
     if ($systems.Count -eq 0) {
       throw 'kvenv: KVENV_SYSTEM is not set. Add KVENV_SYSTEM=<app name> and KVENV_ENV=test to the committed .env (run the general-kvenv-setup skill).'
@@ -101,10 +101,10 @@ function Import-KvEnv {
     $names = @($listJson | ConvertFrom-Json)
     $result = @{}
     foreach ($s in $systems) {
-      $prefix = "$s-"
+      $prefix = if ($s -eq '*') { '' } else { "$s-" }
       $count = 0
       foreach ($n in $names) {
-        if (-not $n.ToLower().StartsWith($prefix)) { continue }
+        if ($prefix -and -not $n.ToLower().StartsWith($prefix)) { continue }
         $count++
         $var = $n.Substring($prefix.Length).Replace('-', '_')
         if ([Environment]::GetEnvironmentVariable($var)) { continue }

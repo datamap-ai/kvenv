@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import DEFAULT_ENV, KvEnvError, _parse_dotenv, repo_root, secret_name, var_name, vault_name
+from . import DEFAULT_ENV, WILDCARD, KvEnvError, _parse_dotenv, repo_root, secret_name, var_name, vault_name
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -99,7 +99,7 @@ def cmd_push(args: argparse.Namespace) -> int:
     # Loading is prefix-based (`<system>-*`), so one system name must never be a prefix of another
     # ("boomi" would swallow "boomi-embedkit-*"). Refuse the push when that would happen.
     existing = {(p.tags or {}).get("system") for p in client.list_properties_of_secrets()} - {None, args.system}
-    clash = [s for s in existing if s.startswith(args.system + "-") or args.system.startswith(s + "-")]
+    clash = [] if args.system == WILDCARD else [s for s in existing if s.startswith(args.system + "-") or args.system.startswith(s + "-")]
     if clash and not args.force:
         sys.exit(f"system {args.system!r} collides by prefix with existing system(s) {sorted(clash)} in {vault}; "
                  "pick a name that is not a prefix of / prefixed by another system, or pass --force")
@@ -108,7 +108,7 @@ def cmd_push(args: argparse.Namespace) -> int:
     for var, (value, source) in items.items():
         name = secret_name(args.system, var)
         tags = {
-            "system": args.system,
+            **({} if args.system == WILDCARD else {"system": args.system}),
             "var": var,
             "owner": owner,
             "rotated": today,

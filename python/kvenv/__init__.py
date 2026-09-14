@@ -2,7 +2,8 @@
 
 Contract (identical in the Node and PowerShell ports):
 
-  * ``KVENV_SYSTEM``  required; one or more comma-separated system names.
+  * ``KVENV_SYSTEM``  required; one or more comma-separated system names, or ``*`` to map
+                     every secret in the vault 1:1 (legacy vaults without the ``<system>-`` prefix).
   * ``KVENV_ENV``     ``test`` (default) or ``prod``. Picks the vault.
   * ``KVENV_VAULT``   optional override; otherwise ``kv-datamap-ops-<env>``.
   * ``KVENV_OPTIONAL`` set to ``1`` to downgrade vault failures to a warning.
@@ -53,13 +54,20 @@ def vault_name(env: str | None = None, override: str | None = None) -> str:
     return VAULT_PATTERN.format(env=env)
 
 
+WILDCARD = "*"  # KVENV_SYSTEM=* : every secret in the vault, secret name == variable name (for vaults
+                # that predate the <system>- convention, e.g. kv-dev-datamap-ai's STYTCH-SECRET).
+
+
 def secret_name(system: str, var: str) -> str:
     """Environment variable name -> Key Vault secret name."""
-    return f"{system}-{var.replace('_', '-')}"
+    key = var.replace("_", "-")
+    return key if system == WILDCARD else f"{system}-{key}"
 
 
 def var_name(system: str, name: str) -> str | None:
     """Key Vault secret name -> environment variable name, or None if not for this system."""
+    if system == WILDCARD:
+        return name.replace("-", "_")
     prefix = f"{system}-"
     if not name.lower().startswith(prefix.lower()):
         return None
@@ -171,7 +179,7 @@ def load(
     if optional is None:
         optional = os.environ.get("KVENV_OPTIONAL", "").lower() in ("1", "true", "yes")
     raw = system or os.environ.get("KVENV_SYSTEM", "")
-    systems = [s.strip().lower() for s in raw.split(",") if s.strip()]
+    systems = [s.strip() if s.strip() == WILDCARD else s.strip().lower() for s in raw.split(",") if s.strip()]
     try:
         if not systems:
             raise KvEnvError(

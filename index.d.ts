@@ -1,6 +1,7 @@
 export declare const VAULT_PATTERN: string;
 export declare const ENVS: string[];
 export declare const DEFAULT_ENV: string;
+export declare const WILDCARD: string;
 
 export declare class KvEnvError extends Error {}
 
